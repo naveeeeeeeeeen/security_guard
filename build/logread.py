@@ -1,14 +1,42 @@
-import argparse
 import os
+import bcrypt
+import base64
+import argparse
 from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
-# Function to load the encryption key from a file
-def load_key():
+# Function to derive the encryption key from the password
+def derive_key_from_password(password: str, salt: bytes) -> bytes:
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        iterations=100000,
+        backend=default_backend()
+    )
+    key = base64.urlsafe_b64encode(kdf.derive(password.encode()))
+    return key
+
+# Function to load the hashed password from the log file
+def load_hashed_password(log_path):
+    with open(log_path, 'rb') as f:
+        hashed_password = f.readline().strip()
+    return hashed_password
+
+# Function to authenticate the log based on the token
+def authenticate(log_path, auth_token):
     try:
-        return open("secret.key", "rb").read()
-    except FileNotFoundError:
-        print("First do the setup")
-        return None  # Optionally return None or handle the error as needed
+        hashed_password = load_hashed_password(log_path)
+        if bcrypt.checkpw(auth_token.encode(), hashed_password):
+            return True
+        else:
+            print("Authentication failed: Incorrect token.")
+            return False
+    except ValueError as e:
+        print(f"Authentication failed: {e}")
+        return False
 
 # Function to decrypt a log entry
 def decrypt_entry(entry, key):
@@ -16,28 +44,16 @@ def decrypt_entry(entry, key):
     decrypted_entry = cipher_suite.decrypt(entry.encode())
     return decrypted_entry.decode()
 
-# Function to authenticate the log based on the token
-def authenticate(log, auth_token, key):
-    if os.path.exists(log):
-        with open(log, 'r') as f:
-            encrypted_token = f.readline().strip()
-            cipher_suite = Fernet(key)
-            correct_token = cipher_suite.decrypt(encrypted_token.encode()).decode()
-            return correct_token == auth_token
-    else:
-        print(f"Log file '{log}' does not exist.")
-        return False
-
 # Function to calculate total time spent by an employee/guest in the campus
-def calculate_total_time(log, name, entity_type, key):
+def calculate_total_time(log_path, name, entity_type, key):
     total_time = 0
     in_campus = False
     last_arrival = None
     latest_timestamp = None
 
     try:
-        with open(log, 'r') as f:
-            lines = f.readlines()[1:]  # Skip the first line (token)
+        with open(log_path, 'r') as f:
+            lines = f.readlines()[1:]
             for line in lines:
                 decrypted_entry = decrypt_entry(line.strip(), key)
                 parts = decrypted_entry.split(", ")
@@ -72,14 +88,14 @@ def calculate_total_time(log, name, entity_type, key):
     return total_time
 
 # Function to read the current state of the campus
-def read_state(log, key):
+def read_state(log_path, key):
     employees = []
     guests = []
     rooms = {}
 
     try:
-        with open(log, 'r') as f:
-            lines = f.readlines()[1:]  # Skip the first line (token)
+        with open(log_path, 'r') as f:
+            lines = f.readlines()[1:]
             for line in lines:
                 decrypted_entry = decrypt_entry(line.strip(), key)
                 parts = decrypted_entry.split(", ")
@@ -124,13 +140,13 @@ def print_state(employees, guests, rooms):
     for room_id in sorted(rooms.keys(), key=int):
         print(f"{room_id}: {','.join(sorted(rooms[room_id]))}")
 
-# New function to list all rooms entered by an employee or guest
-def list_rooms(log, name, entity_type, key):
+# Function to list all rooms entered by an employee or guest
+def list_rooms(log_path, name, entity_type, key):
     rooms_visited = []
 
     try:
-        with open(log, 'r') as f:
-            lines = f.readlines()[1:]  # Skip the first line (token)
+        with open(log_path, 'r') as f:
+            lines = f.readlines()[1:]
             for line in lines:
                 decrypted_entry = decrypt_entry(line.strip(), key)
                 parts = decrypted_entry.split(", ")
@@ -146,14 +162,14 @@ def list_rooms(log, name, entity_type, key):
 
     return rooms_visited
 
-# New function to list rooms occupied by all specified employees and guests at the same time
-def list_common_rooms(log, names, key):
+# Function to list rooms occupied by all specified employees and guests at the same time
+def list_common_rooms(log_path, names, key):
     room_occupancy = {}
     common_rooms = set()
 
     try:
-        with open(log, 'r') as f:
-            lines = f.readlines()[1:]  # Skip the first line (token)
+        with open(log_path, 'r') as f:
+            lines = f.readlines()[1:]
             for line in lines:
                 decrypted_entry = decrypt_entry(line.strip(), key)
                 parts = decrypted_entry.split(", ")
@@ -182,8 +198,6 @@ def list_common_rooms(log, names, key):
 # Main function to process command-line arguments and query the log
 def process_args(args=None):
     parser = argparse.ArgumentParser(description="Read campus log.")
-
-    # Command-line arguments
     parser.add_argument("-K", required=True, help="Authentication token")
     parser.add_argument("-S", action="store_true", help="Print state of campus")
     parser.add_argument("-T", action="store_true", help="Calculate total time spent")
@@ -194,65 +208,66 @@ def process_args(args=None):
     parser.add_argument("log", help="Path to the log file")
 
     args = parser.parse_args(args)
+    log_path = os.path.abspath(args.log)
 
-    # Load encryption key
-    key = load_key()
-    if key is None:
-        return  # Exit if key loading failed
-    key = 'cjwLeVHhTx7PWUEGJVpYiPVRDUrPORnupX7TZED7w/Q=' # Dummy Key
 
-    # Authenticate the token
-    if not authenticate(args.log, args.K, key):
+    # Check if log file exists
+    if not os.path.exists(log_path):
+        print(f"Error: Log file '{args.log}' does not exist.")
+        return
+    
+    if not authenticate(log_path, args.K):
         print("Integrity violation")
-        return  # Exit without an error code
+        return
 
-    # Process -S: Print state of the campus
+    hashed_password = load_hashed_password(log_path)
+    salt = hashed_password[:16] 
+    key = derive_key_from_password(args.K, salt)
+
+    # Process the different arguments based on the provided flags
     if args.S:
-        employees, guests, rooms = read_state(args.log, key)
+        employees, guests, rooms = read_state(log_path, key)
         print_state(employees, guests, rooms)
+        return
 
-    # Process -T: Calculate total time for employee or guest
     if args.T:
         if args.E:
-            total_time = calculate_total_time(args.log, args.E[0], "employee", key)
+            total_time = calculate_total_time(log_path, args.E[0], "employee", key)
         elif args.G:
-            total_time = calculate_total_time(args.log, args.G[0], "guest", key)
+            total_time = calculate_total_time(log_path, args.G[0], "guest", key)
         else:
             print("Error: Specify either -E for employee or -G for guest.")
-            return  # Exit without an error code
-
+            return
         if total_time > 0:
             print(total_time)
+            return
 
-    # Process -R: List rooms entered by employee or guest
     if args.R:
         if args.E:
-            rooms_visited = list_rooms(args.log, args.E[0], "employee", key)
+            rooms_visited = list_rooms(log_path, args.E[0], "employee", key)
         elif args.G:
-            rooms_visited = list_rooms(args.log, args.G[0], "guest", key)
+            rooms_visited = list_rooms(log_path, args.G[0], "guest", key)
         else:
             print("Error: Specify either -E for employee or -G for guest.")
-            return  # Exit without an error code
+            return
+        print(",".join(rooms_visited))
+        return
 
-        if rooms_visited:
-            print(",".join(rooms_visited))
-
-    # Process -I: List common rooms occupied by all specified employees and guests
     if args.I:
         names = []
         if args.E:
             names.extend(args.E)
-        if args.G:
+        elif args.G:
             names.extend(args.G)
+        else:
+            print("Error: Specify either -E for employee or -G for guest.")
+            return
+        common_rooms = list_common_rooms(log_path, names, key)
+        print(",".join(common_rooms))
+        return
+    
+    print("Invalid command")
+    return
 
-        if not names:
-            print("Error: Specify at least one -E for employee or -G for guest.")
-            return  # Exit without an error code
-
-        common_rooms = list_common_rooms(args.log, names, key)
-        if common_rooms:
-            print(",".join(common_rooms))
-
-# Entry point for the script
 if __name__ == "__main__":
     process_args()

@@ -1,13 +1,25 @@
 # How to Run?
 
-### If not build already, run 'make build' first (make sure the requirements are installed).
+## Install requirements mentioned in the requirements.txt file. (Better to run in a virtual environment)
 
-## Open terminal in build directory
+## Now go to the build directory.
 
-### Do the setup:
+## If not build already, run 'make build' first.
+
+## Run " python3 server.py ip_add port_no " in the server machine.
+(Use your server ip and port no., If not provided default ip and port will be used. Default ip: 127.0.0.1, Default port: 12345)
+
+## Run " python3 client.py ip_add port_no " in the client machine to connect to the server.
+(Default ip: 127.0.0.1, Default port: 12345) (Clients only need the client.py file in their machines.)
+
+## After Connection, Clients can execute the commands from their machine.
+
+### (First Command) Do the setup:
 ```bash
 ./setup <your_password> <logfilename>
 ```
+(Logfile file names such as dot dot dot (...) or slash slash slash (///) without any other alphanumeric characters are not allowed.)
+
 ### Now you can read and write entries in the logfile using your password.
 
 #### Possible Commands:
@@ -50,3 +62,10 @@ logread
     -T: Calculate time spent
     -I: Shared room number
 ```
+
+## Screenshots
+#### client side:
+![Alt Text](screenshots/1.png)
+![Alt Text](screenshots/2.png)
+#### server side:
+![Alt Text](screenshots/3.png)
